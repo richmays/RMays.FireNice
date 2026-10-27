@@ -1,0 +1,15 @@
+; Space makes ice one step ahead and one step down. Ice made next to a block sticks to it.
+; Build a bridge across the pit, one cube at a time.
+name: Bridge Builder
+width: 14
+height: 8
+player: 1, 3
+grid:
+##############
+#............#
+#............#
+#.......I..F.#
+####...#######
+####...#######
+####...#######
+##############

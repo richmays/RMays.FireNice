@@ -1,0 +1,13 @@
+; Walk into an open pipe end to travel through it. Press Up (or W) under a pipe that's open at
+; the bottom, or Down (or S) on top of one that's open at the top.
+name: Pipe Dream
+width: 12
+height: 6
+player: 1, 4
+grid:
+############
+#.....I..F.#
+#####|######
+#..#.|.....#
+#..-.......#
+############

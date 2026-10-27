@@ -1,0 +1,14 @@
+; Blue jars are safe to stand on. Red jars are lit: they burn the player and melt ice on top of them.
+; A fire sitting on a blue jar lights it. Don't fall into the pit!
+name: Hot Pit
+width: 14
+height: 7
+player: 1, 2
+grid:
+##############
+#............#
+#........I.F.#
+####...#J##J##
+####...#######
+####LLL#######
+##############

@@ -1,0 +1,12 @@
+; Space on existing ice removes it. Ice that isn't held by a block falls.
+name: Let It Go
+width: 12
+height: 6
+player: 2, 2
+grid:
+############
+#..........#
+#..........#
+###=<..I.F.#
+####F#######
+############

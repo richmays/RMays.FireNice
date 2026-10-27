@@ -1,0 +1,10 @@
+; Walk right with the Right arrow (or D) and push the ice into the fire.
+name: First Push
+width: 10
+height: 4
+player: 2, 2
+grid:
+##########
+#........#
+#....I.F.#
+##########

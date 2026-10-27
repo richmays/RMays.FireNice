@@ -1,0 +1,12 @@
+; Pushed ice slides until it runs out of floor, then it falls.
+name: Over the Edge
+width: 10
+height: 6
+player: 2, 2
+grid:
+##########
+#........#
+#...I....#
+######...#
+#.....F..#
+##########

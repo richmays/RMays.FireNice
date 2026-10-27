@@ -1,0 +1,12 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Test and benchmark results
+TestResults/
+BenchmarkDotNet.Artifacts/

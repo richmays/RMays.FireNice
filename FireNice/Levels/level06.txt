@@ -1,0 +1,11 @@
+; Iron crates never melt. A pushed crate moves one space, but keeps sliding while it's on ice.
+name: Heavy Metal
+width: 10
+height: 5
+player: 1, 2
+grid:
+##########
+#........#
+#..C....F#
+####LIII##
+##########
