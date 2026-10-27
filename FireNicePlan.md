@@ -367,6 +367,17 @@ Checked at the end of every tick and after every player input:
   game from that copy. Held-key repeats are cancelled on reset.
 - After reset, the clock restarts, so the start-of-level falling (R31, R32) happens again.
 
+### 3.17 Rewind
+- A **Rewind** button (toolbar button, menu item and the `Z` key) undoes the player's last input and
+  everything it set off: falls, slides, melting, pipe trips, even dying. The game goes back exactly
+  as it was just before that key press, including the way the player was facing.
+- Only one step is kept. After rewinding, there's nothing more to rewind until the player acts again.
+- Inputs that change nothing (walking into a wall, using the action on a block) don't count as a step.
+- Rewind works after winning or losing. It stops a solution replay and cancels a solve in progress.
+- The animation plays the step backwards at double speed: the player retraces the cells they went
+  through, each taking half as long as it did going forwards, and anything that moved glides straight
+  back at half a tick per cell.
+
 ## 4. Architecture
 
 Game logic is kept separate from the UI so the rules can be unit-tested without a window. The core has
@@ -457,6 +468,7 @@ the two attachment flags (only used for ice). The player is stored separately be
 | `Down`, `S` | Enter a pipe below that's open at the top |
 | `Space` | Action: create / remove ice |
 | `R` | Reset level |
+| `Z` | Rewind one step |
 
 | Timing | Default |
 |--------|---------|

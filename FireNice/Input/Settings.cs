@@ -37,6 +37,7 @@ public sealed class Settings
         [GameAction.MoveDown] = new() { Keys.Down, Keys.S },
         [GameAction.Action] = new() { Keys.Space },
         [GameAction.Reset] = new() { Keys.R },
+        [GameAction.Rewind] = new() { Keys.Z },
         [GameAction.NextLevel] = new() { Keys.Enter },
     };
 

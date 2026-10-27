@@ -52,17 +52,19 @@ public sealed class MainForm : Form
             : new List<string>();
 
         var resetItem = new ToolStripMenuItem("&Reset Level", null, (_, _) => ResetLevel()) { ShortcutKeyDisplayString = "R" };
+        var rewindItem = new ToolStripMenuItem("Re&wind One Step", null, (_, _) => RewindOneStep()) { ShortcutKeyDisplayString = "Z" };
         var loadItem = new ToolStripMenuItem("&Load Level...", null, (_, _) => LoadLevelFromDialog());
         nextLevelItem = new ToolStripMenuItem("&Next Level", null, (_, _) => NextLevel()) { ShortcutKeyDisplayString = "Enter" };
         solveItem = new ToolStripMenuItem("&Solve", null, (_, _) => Solve());
         var exitItem = new ToolStripMenuItem("E&xit", null, (_, _) => Close());
         var gameMenu = new ToolStripMenuItem("&Game");
-        gameMenu.DropDownItems.AddRange(new ToolStripItem[] { resetItem, solveItem, loadItem, nextLevelItem, new ToolStripSeparator(), exitItem });
+        gameMenu.DropDownItems.AddRange(new ToolStripItem[] { resetItem, rewindItem, solveItem, loadItem, nextLevelItem, new ToolStripSeparator(), exitItem });
         var menu = new MenuStrip();
         menu.Items.Add(gameMenu);
 
         var toolbar = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
         toolbar.Items.Add(new ToolStripButton("Reset", null, (_, _) => ResetLevel()) { ToolTipText = "Put the level back to how it started (R)" });
+        toolbar.Items.Add(new ToolStripButton("Rewind", null, (_, _) => RewindOneStep()) { ToolTipText = "Undo your last move (Z)" });
 
         var status = new StatusStrip();
         status.Items.AddRange(new ToolStripItem[] { levelLabel, firesLabel });
@@ -112,17 +114,21 @@ public sealed class MainForm : Form
     {
         if (playback is not null)
         {
-            // Any game key stops the replay where it is; Reset also resets.
+            // Any game key stops the replay where it is; Reset and Rewind also do their job.
             StopPlayback();
             if (action == GameAction.Reset)
             {
                 ResetLevel();
             }
+            else if (action == GameAction.Rewind)
+            {
+                RewindOneStep();
+            }
 
             return;
         }
 
-        if (solveCancel is not null && action != GameAction.Reset)
+        if (solveCancel is not null && action is not (GameAction.Reset or GameAction.Rewind))
         {
             return; // Still solving.
         }
@@ -146,6 +152,9 @@ public sealed class MainForm : Form
                 break;
             case GameAction.Reset:
                 ResetLevel();
+                break;
+            case GameAction.Rewind:
+                RewindOneStep();
                 break;
             case GameAction.NextLevel:
                 if (game?.Status == GameStatus.Won)
@@ -287,6 +296,21 @@ public sealed class MainForm : Form
         StopPlayback();
         repeater?.ReleaseAll();
         game.Reset();
+        nextTickAt = Now + settings.TickMs;
+    }
+
+    /// <summary>Undoes the player's last move. Does nothing if there isn't one to undo.</summary>
+    private void RewindOneStep()
+    {
+        if (game is null || !game.CanRewind)
+        {
+            return;
+        }
+
+        CancelSolve();
+        StopPlayback();
+        repeater?.ReleaseAll();
+        game.Rewind();
         nextTickAt = Now + settings.TickMs;
     }
 
@@ -446,7 +470,7 @@ public sealed class MainForm : Form
         string state = game.Status switch
         {
             GameStatus.Won => "  (complete)",
-            GameStatus.Lost => "  (burned - press R)",
+            GameStatus.Lost => "  (burned - press R to reset or Z to rewind)",
             _ => string.Empty,
         };
         if (solveCancel is not null)

@@ -16,6 +16,7 @@ public enum GameAction
     MoveDown,
     Action,
     Reset,
+    Rewind,
     NextLevel,
 }
 

@@ -14,4 +14,13 @@ public enum ChangeKind
 
     /// <summary>The game clock advanced: things fell, slid or moved through a pipe.</summary>
     Tick,
+
+    /// <summary>The latest input was undone; everything glides back along the way it came.</summary>
+    Rewind,
 }
+
+/// <summary>
+/// A cell the player passes through while rewinding, and how they originally got into it
+/// (a key press or a tick), which sets how long the glide back out of it takes.
+/// </summary>
+public readonly record struct RewindStep(int X, int Y, ChangeKind CameBy);
