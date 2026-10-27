@@ -25,6 +25,10 @@ public sealed class MainForm : Form
     private long nextTickAt;
     private bool wasAnimating;
 
+    // Holding Rewind keeps undoing, twice as fast as walking repeats.
+    private bool rewindHeld;
+    private long nextRewindAt;
+
     // Solve runs in the background; game keys are ignored until it finishes.
     private CancellationTokenSource? solveCancel;
     private int solveRun;
@@ -64,7 +68,7 @@ public sealed class MainForm : Form
 
         var toolbar = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
         toolbar.Items.Add(new ToolStripButton("Reset", null, (_, _) => ResetLevel()) { ToolTipText = "Put the level back to how it started (R)" });
-        toolbar.Items.Add(new ToolStripButton("Rewind", null, (_, _) => RewindOneStep()) { ToolTipText = "Undo your last move (Z)" });
+        toolbar.Items.Add(new ToolStripButton("Rewind", null, (_, _) => RewindOneStep()) { ToolTipText = "Undo your last move; hold Z to keep going back (Z)" });
 
         var status = new StatusStrip();
         status.Items.AddRange(new ToolStripItem[] { levelLabel, firesLabel });
@@ -76,7 +80,11 @@ public sealed class MainForm : Form
         MainMenuStrip = menu;
 
         clock.Tick += (_, _) => OnClock();
-        Deactivate += (_, _) => repeater?.ReleaseAll();
+        Deactivate += (_, _) =>
+        {
+            repeater?.ReleaseAll();
+            rewindHeld = false;
+        };
         Shown += (_, _) => StartFirstLevel();
     }
 
@@ -112,23 +120,32 @@ public sealed class MainForm : Form
 
     private void OnActionDown(GameAction action)
     {
-        if (playback is not null)
+        if (action == GameAction.Rewind)
         {
-            // Any game key stops the replay where it is; Reset and Rewind also do their job.
-            StopPlayback();
-            if (action == GameAction.Reset)
+            if (!rewindHeld)
             {
-                ResetLevel();
-            }
-            else if (action == GameAction.Rewind)
-            {
+                // Windows auto-repeat is ignored; the clock repeats while the key is held.
+                rewindHeld = true;
                 RewindOneStep();
+                nextRewindAt = Now + RewindRepeatMs;
             }
 
             return;
         }
 
-        if (solveCancel is not null && action is not (GameAction.Reset or GameAction.Rewind))
+        if (playback is not null)
+        {
+            // Any game key stops the replay where it is; Reset also resets.
+            StopPlayback();
+            if (action == GameAction.Reset)
+            {
+                ResetLevel();
+            }
+
+            return;
+        }
+
+        if (solveCancel is not null && action != GameAction.Reset)
         {
             return; // Still solving.
         }
@@ -153,9 +170,6 @@ public sealed class MainForm : Form
             case GameAction.Reset:
                 ResetLevel();
                 break;
-            case GameAction.Rewind:
-                RewindOneStep();
-                break;
             case GameAction.NextLevel:
                 if (game?.Status == GameStatus.Won)
                 {
@@ -179,8 +193,13 @@ public sealed class MainForm : Form
             case GameAction.Action:
                 repeater?.ActionUp();
                 break;
+            case GameAction.Rewind:
+                rewindHeld = false;
+                break;
         }
     }
+
+    private int RewindRepeatMs => settings.RepeatIntervalMs / 2;
 
     private void OnClock()
     {
@@ -200,6 +219,12 @@ public sealed class MainForm : Form
         }
         else
         {
+            if (rewindHeld && now >= nextRewindAt)
+            {
+                RewindOneStep();
+                nextRewindAt = now + RewindRepeatMs;
+            }
+
             repeater.Update(now);
 
             // Catch up on missed ticks, but not forever if the window was stalled.

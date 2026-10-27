@@ -371,7 +371,10 @@ Checked at the end of every tick and after every player input:
 - A **Rewind** button (toolbar button, menu item and the `Z` key) undoes the player's last input and
   everything it set off: falls, slides, melting, pipe trips, even dying. The game goes back exactly
   as it was just before that key press, including the way the player was facing.
-- Only one step is kept. After rewinding, there's nothing more to rewind until the player acts again.
+- Every input since the level started (or was reset) is kept on a stack. Each rewind pops the latest
+  one, so pressing Rewind again and again, or holding it, leads all the way back to the start.
+  Holding the key repeats at half the walk repeat interval (twice as fast as walking).
+- Playing on after a rewind pushes new steps on top of the ones still kept.
 - Inputs that change nothing (walking into a wall, using the action on a block) don't count as a step.
 - Rewind works after winning or losing. It stops a solution replay and cancels a solve in progress.
 - The animation plays the step backwards at double speed: the player retraces the cells they went
@@ -468,7 +471,7 @@ the two attachment flags (only used for ice). The player is stored separately be
 | `Down`, `S` | Enter a pipe below that's open at the top |
 | `Space` | Action: create / remove ice |
 | `R` | Reset level |
-| `Z` | Rewind one step |
+| `Z` | Rewind one step (hold to keep rewinding) |
 
 | Timing | Default |
 |--------|---------|

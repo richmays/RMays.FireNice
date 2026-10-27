@@ -28,7 +28,68 @@ public class RewindTests
     }
 
     [Fact]
-    public void RewindGoesBackOnlyOneStep()
+    public void EachRewindUndoesTheInputBeforeIt()
+    {
+        GameState game = Game(
+            "#######",
+            "#.....#",
+            "#P....#",
+            "#######");
+        Play(game, "R", "R", "L");
+        Assert.Equal(3, game.RewindCount);
+
+        Assert.True(game.Rewind());
+        Assert.Equal((3, 2, Direction.Right), (game.Player.X, game.Player.Y, game.Player.Facing));
+
+        Assert.True(game.Rewind());
+        Assert.Equal((2, 2, Direction.Right), (game.Player.X, game.Player.Y, game.Player.Facing));
+
+        Assert.True(game.Rewind());
+        Assert.Equal((1, 2, Direction.Right), (game.Player.X, game.Player.Y, game.Player.Facing));
+
+        Assert.False(game.CanRewind);
+        Assert.False(game.Rewind());
+        Assert.Equal((1, 2), (game.Player.X, game.Player.Y));
+    }
+
+    [Fact]
+    public void RewindingEveryInputLeadsBackToTheStartOfTheLevel()
+    {
+        GameState game = Game(
+            "#########",
+            "#.......#",
+            "#.PI.F..#",
+            "#######.#",
+            "#F......#",
+            "#########");
+        RunUntilStill(game);
+        string[] start = Rows(game);
+
+        // Push the ice into the top fire, walk to the hole, fill it with ice and clear it again,
+        // then drop through it and walk left along the bottom.
+        Play(game, "R", "R", "R", "R", "R", "A", "A", "R", "L", "L", "L");
+        AssertRows(
+            game,
+            "#########",
+            "#.......#",
+            "#.......#",
+            "#######.#",
+            "#F...P..#",
+            "#########");
+        Assert.Equal(11, game.RewindCount);
+
+        while (game.Rewind())
+        {
+            RunUntilStill(game);
+        }
+
+        AssertRows(game, start);
+        Assert.Equal(Direction.Right, game.Player.Facing);
+        Assert.Equal(GameStatus.Playing, game.Status);
+    }
+
+    [Fact]
+    public void PlayingOnAfterARewindKeepsTheEarlierSteps()
     {
         GameState game = Game(
             "#######",
@@ -36,13 +97,15 @@ public class RewindTests
             "#P....#",
             "#######");
         Play(game, "R", "R");
+        game.Rewind();
+        Play(game, "L");
 
-        Assert.True(game.Rewind());
-        Assert.Equal((2, 2), (game.Player.X, game.Player.Y));
+        game.Rewind(); // Undoes the turn left.
+        Assert.Equal((2, 2, Direction.Right), (game.Player.X, game.Player.Y, game.Player.Facing));
 
+        game.Rewind(); // Undoes the first step.
+        Assert.Equal((1, 2), (game.Player.X, game.Player.Y));
         Assert.False(game.CanRewind);
-        Assert.False(game.Rewind());
-        Assert.Equal((2, 2), (game.Player.X, game.Player.Y));
     }
 
     [Fact]

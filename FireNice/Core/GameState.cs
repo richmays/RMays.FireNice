@@ -15,11 +15,8 @@ public sealed class GameState : IPlayerControls
     /// <summary>Set while the player is traveling through a pipe.</summary>
     private PipeTravel? pipe;
 
-    // One-step rewind: the game just before the latest input, the cells the player has been
-    // through since (oldest first), and where each thing that moved since started out.
-    private GameState? beforeLastInput;
-    private readonly List<RewindStep> trailSinceInput = new();
-    private readonly Dictionary<(int X, int Y), (int X, int Y)> originsSinceInput = new();
+    // Rewind: one point per input since the level started, the latest on top.
+    private readonly Stack<RewindPoint> rewindPoints = new();
     private readonly List<RewindStep> rewindPath = new();
 
     public GameState(LevelData data)
@@ -198,7 +195,10 @@ public sealed class GameState : IPlayerControls
     public bool KeepsRewind { get; set; }
 
     /// <summary>There's an input that <see cref="Rewind"/> can undo.</summary>
-    public bool CanRewind => beforeLastInput is not null;
+    public bool CanRewind => rewindPoints.Count > 0;
+
+    /// <summary>How many inputs <see cref="Rewind"/> can undo, one at a time.</summary>
+    public int RewindCount => rewindPoints.Count;
 
     /// <summary>
     /// After a rewind: the cells the player went back through, starting where they were and
@@ -240,41 +240,42 @@ public sealed class GameState : IPlayerControls
         moves.Clear();
         pipe = null;
         Status = GameStatus.Playing;
-        ForgetRewind();
+        rewindPoints.Clear();
         OnChanged(ChangeKind.Reset);
     }
 
     /// <summary>
     /// Undoes the latest input and everything it set off (falls, slides, pipe trips, even a
-    /// death), putting the game back exactly as it was just before that key press. Only one
-    /// step is kept. Returns false if there's nothing to undo.
+    /// death), putting the game back exactly as it was just before that key press. Every input
+    /// since the level started is kept, so rewinding again and again leads back to the start.
+    /// Returns false if there's nothing left to undo.
     /// </summary>
     public bool Rewind()
     {
-        if (beforeLastInput is not { } before)
+        if (!rewindPoints.TryPop(out RewindPoint? point))
         {
             return false;
         }
 
         rewindPath.Clear();
-        for (int i = trailSinceInput.Count - 1; i >= 0; i--)
+        for (int i = point.Trail.Count - 1; i >= 0; i--)
         {
-            rewindPath.Add(trailSinceInput[i]);
+            rewindPath.Add(point.Trail[i]);
         }
 
         moves.Clear();
-        foreach (var (now, origin) in originsSinceInput)
+        foreach (var (now, origin) in point.Origins)
         {
             moves.Add(new CellMove(now.X, now.Y, origin.X, origin.Y));
         }
 
+        GameState before = point.Before;
         Level = before.Level;
         Player = before.Player;
         sliding.Clear();
         sliding.AddRange(before.sliding);
         pipe = before.pipe;
         Status = before.Status;
-        ForgetRewind();
         OnChanged(ChangeKind.Rewind);
         return true;
     }
@@ -425,8 +426,9 @@ public sealed class GameState : IPlayerControls
     }
 
     /// <summary>
-    /// Makes <paramref name="before"/> (the game just before an input) the step <see cref="Rewind"/>
-    /// goes back to, unless the input didn't change anything (like walking into a wall).
+    /// Pushes <paramref name="before"/> (the game just before an input) as the next step
+    /// <see cref="Rewind"/> goes back to, unless the input didn't change anything (like walking
+    /// into a wall).
     /// </summary>
     private void RememberForRewind(GameState? before)
     {
@@ -435,24 +437,27 @@ public sealed class GameState : IPlayerControls
             return;
         }
 
-        ForgetRewind();
-        beforeLastInput = before;
-        trailSinceInput.Add(new RewindStep(before.Player.X, before.Player.Y, ChangeKind.Input));
+        var point = new RewindPoint(before);
+        point.Trail.Add(new RewindStep(before.Player.X, before.Player.Y, ChangeKind.Input));
+        rewindPoints.Push(point);
         TrackForRewind(ChangeKind.Input);
     }
 
-    /// <summary>Records where the player and anything that moved got to, so a rewind can glide them back.</summary>
+    /// <summary>
+    /// Records where the player and anything that moved got to, so a rewind can glide them back.
+    /// Everything that happens until the next input belongs to the latest one.
+    /// </summary>
     private void TrackForRewind(ChangeKind cameBy)
     {
-        if (beforeLastInput is null)
+        if (!rewindPoints.TryPeek(out RewindPoint? point))
         {
             return;
         }
 
-        RewindStep last = trailSinceInput[^1];
+        RewindStep last = point.Trail[^1];
         if (Player.X != last.X || Player.Y != last.Y)
         {
-            trailSinceInput.Add(new RewindStep(Player.X, Player.Y, cameBy));
+            point.Trail.Add(new RewindStep(Player.X, Player.Y, cameBy));
         }
 
         if (moves.Count == 0)
@@ -466,20 +471,13 @@ public sealed class GameState : IPlayerControls
         foreach (CellMove m in moves)
         {
             (int X, int Y) from = (m.FromX, m.FromY);
-            arrived.Add(((m.ToX, m.ToY), originsSinceInput.Remove(from, out var origin) ? origin : from));
+            arrived.Add(((m.ToX, m.ToY), point.Origins.Remove(from, out var origin) ? origin : from));
         }
 
         foreach (var (at, origin) in arrived)
         {
-            originsSinceInput[at] = origin;
+            point.Origins[at] = origin;
         }
-    }
-
-    private void ForgetRewind()
-    {
-        beforeLastInput = null;
-        trailSinceInput.Clear();
-        originsSinceInput.Clear();
     }
 
     private void EnterPipe(int x, int y, Heading moving)
@@ -919,6 +917,24 @@ public sealed class GameState : IPlayerControls
         public bool Returning { get; set; }
 
         public PipeTravel Clone() => new(Moving) { Returning = Returning };
+    }
+
+    /// <summary>
+    /// One input that can be rewound: the game just before it, the cells the player has been
+    /// through since (oldest first), and where each thing that moved since started out.
+    /// </summary>
+    private sealed class RewindPoint
+    {
+        public RewindPoint(GameState before)
+        {
+            Before = before;
+        }
+
+        public GameState Before { get; }
+
+        public List<RewindStep> Trail { get; } = new();
+
+        public Dictionary<(int X, int Y), (int X, int Y)> Origins { get; } = new();
     }
 
     /// <summary>A pushed ice cube or crate that is still moving sideways.</summary>
