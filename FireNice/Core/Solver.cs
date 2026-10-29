@@ -100,15 +100,18 @@ public static class Solver
     /// if it gives up, the fallback search runs until <paramref name="cancel"/>. Stops with
     /// <see cref="SolveOutcome.GaveUp"/> if the token is cancelled or too many positions pile up first.
     /// <paramref name="isDeadEnd"/>, if given, marks settled positions that can't lead to a win (see
-    /// <see cref="LevelShortcuts"/>); neither search goes on from them.
+    /// <see cref="LevelShortcuts"/>); neither search goes on from them. <paramref name="progress"/>,
+    /// if given, is kept up to date while the search runs.
     /// </summary>
     public static SolveResult Solve(
         GameState start,
         CancellationToken cancel,
         TimeSpan? shortestTimeLimit = null,
         int maxPositions = 25_000_000,
-        Func<GameState, bool>? isDeadEnd = null)
+        Func<GameState, bool>? isDeadEnd = null,
+        SolveProgress? progress = null)
     {
+        progress ??= new SolveProgress();
         GameState root = start.Clone();
         if (!Settle(root) || root.Status == GameStatus.Lost)
         {
@@ -132,7 +135,7 @@ public static class Solver
                 shortestCancel.CancelAfter(limit);
             }
 
-            shortest = SolveShortest(root, shortestCancel.Token, maxPositions, isDeadEnd);
+            shortest = SolveShortest(root, shortestCancel.Token, maxPositions, isDeadEnd, progress);
         }
 
         if (shortest.Outcome != SolveOutcome.GaveUp || cancel.IsCancellationRequested)
@@ -140,7 +143,7 @@ public static class Solver
             return shortest;
         }
 
-        SolveResult any = SolveAny(root, cancel, maxPositions, isDeadEnd);
+        SolveResult any = SolveAny(root, cancel, maxPositions, isDeadEnd, progress);
         return any with { PositionsChecked = shortest.PositionsChecked + any.PositionsChecked };
     }
 
@@ -155,8 +158,13 @@ public static class Solver
     /// add them, so the solution found is the same every time.
     /// </remarks>
     private static SolveResult SolveShortest(
-        GameState root, CancellationToken cancel, int maxPositions, Func<GameState, bool>? isDeadEnd)
+        GameState root,
+        CancellationToken cancel,
+        int maxPositions,
+        Func<GameState, bool>? isDeadEnd,
+        SolveProgress progress)
     {
+        progress.StartStage(SolveStage.Shortest);
         int[] cells = ChangeableCells(root.Level);
         var positions = new PositionStore(PackedWords(cells));
         Span<ulong> packed = stackalloc ulong[positions.Words];
@@ -164,8 +172,10 @@ public static class Solver
         positions.TryAdd(packed, -1, default);
 
         int layerStart = 0;
+        int presses = 1; // Trying the keys of layer n looks for solutions of n + 1 presses.
         while (layerStart < positions.Count)
         {
+            progress.SetDepth(presses);
             int layerEnd = positions.Count;
             int chunkCount = (layerEnd - layerStart + ChunkSize - 1) / ChunkSize;
             var found = new Found[chunkCount];
@@ -178,7 +188,9 @@ public static class Solver
                     if (!cancel.IsCancellationRequested)
                     {
                         int from = layerStart + (chunk * ChunkSize);
-                        found[chunk] = Expand(scratch, cells, positions, from, Math.Min(from + ChunkSize, layerEnd), isDeadEnd);
+                        int to = Math.Min(from + ChunkSize, layerEnd);
+                        found[chunk] = Expand(scratch, cells, positions, from, to, isDeadEnd);
+                        progress.AddChecked(to - from);
                     }
 
                     return scratch;
@@ -190,9 +202,15 @@ public static class Solver
                 return new SolveResult(SolveOutcome.GaveUp, Array.Empty<SolverInput>(), positions.Count);
             }
 
-            // Add the new positions in order: by the position they came from, then by key.
+            // Add the new positions in order: by the position they came from, then by key. A big
+            // layer takes a while, so this checks for cancelling between chunks too.
             foreach (Found chunk in found)
             {
+                if (cancel.IsCancellationRequested)
+                {
+                    return new SolveResult(SolveOutcome.GaveUp, Array.Empty<SolverInput>(), positions.Count);
+                }
+
                 for (int i = 0; i < chunk.Count; i++)
                 {
                     if (!positions.TryAdd(chunk.Packed(i), chunk.Parents[i], chunk.Inputs[i]))
@@ -212,7 +230,9 @@ public static class Solver
                 return new SolveResult(SolveOutcome.GaveUp, Array.Empty<SolverInput>(), positions.Count);
             }
 
-            layerStart = layerEnd;        }
+            layerStart = layerEnd;
+            presses++;
+        }
 
         return new SolveResult(SolveOutcome.Impossible, Array.Empty<SolverInput>(), positions.Count);
     }
@@ -224,14 +244,21 @@ public static class Solver
     /// solution much sooner than the shortest search on most levels, but often not a shortest one.
     /// </summary>
     internal static SolveResult SolveAny(
-        GameState root, CancellationToken cancel, int maxPositions, Func<GameState, bool>? isDeadEnd = null)
+        GameState root,
+        CancellationToken cancel,
+        int maxPositions,
+        Func<GameState, bool>? isDeadEnd = null,
+        SolveProgress? progress = null)
     {
+        progress ??= new SolveProgress();
+        progress.StartStage(SolveStage.AnySolution);
         int[] cells = ChangeableCells(root.Level);
         var positions = new PositionStore(PackedWords(cells));
         var packed = new ulong[positions.Words];
         var parent = new ulong[positions.Words];
         root.Pack(cells, packed);
         positions.TryAdd(packed, -1, default);
+        var depths = new List<int> { 0 }; // Presses from the start, by position number.
 
         var open = new PriorityQueue<int, (int Score, int Node)>();
         open.Enqueue(0, (Promise(root), 0));
@@ -244,6 +271,8 @@ public static class Solver
             }
 
             positions.Get(node).CopyTo(parent);
+            progress.AddChecked(1);
+            progress.RaiseDepth(depths[node] + 1);
             foreach (SolverInput input in AllInputs)
             {
                 scratch.Unpack(cells, parent);
@@ -265,6 +294,7 @@ public static class Solver
                 }
 
                 int added = positions.Count - 1;
+                depths.Add(depths[node] + 1);
                 if (scratch.Status == GameStatus.Won)
                 {
                     return new SolveResult(SolveOutcome.SolvedNotShortest, positions.PathTo(added), positions.Count);

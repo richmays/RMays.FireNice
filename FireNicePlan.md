@@ -321,6 +321,16 @@ Checked at the end of every tick and after every player input:
 - It runs in the background with a time limit (`SolverTimeLimitMs` in keybindings.json, default 60
   seconds; an existing keybindings.json that sets its own value keeps it). The status bar shows
   "solving..." and game keys are ignored until it finishes. Reset or loading a level cancels it.
+- **Progress dialog** (`UI/SolveProgressDialog.cs`): while it runs, a small "Solving" window centred
+  on the game shows which search is running, the **search depth** (in the shortest search, the
+  number of moves now being searched, with every shorter solution already ruled out; in the
+  fallback, the most moves of any position reached) and the **positions checked** (positions whose
+  key presses have all been tried, both searches together). It refreshes once a second from a
+  `SolveProgress` object the solver keeps up to date. **Cancel** (or Esc, or closing the window)
+  stops the search at once and shows no result message. The solver checks for cancelling between
+  small batches of positions, so it stops within a few milliseconds (about 15 ms measured, 20
+  seconds into Round 10-6). The dialog closes by itself when the search finishes, before the result
+  message.
 - **Fallback:** the shortest search gets the first half of the time limit. If it hasn't finished by
   then (or hits its position limit), a second search looks for *any* solution for the rest of the
   time (`Solver.SolveAny`). It's a greedy best-first search: it always continues from the most

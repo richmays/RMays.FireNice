@@ -35,6 +35,7 @@ public sealed class MainForm : Form
     // Solve runs in the background; game keys are ignored until it finishes.
     private CancellationTokenSource? solveCancel;
     private int solveRun;
+    private SolveProgressDialog? solveDialog;
 
     // Set while a found solution is being replayed.
     private Playback? playback;
@@ -375,6 +376,19 @@ public sealed class MainForm : Form
         UseWaitCursor = true;
         UpdateStatusBar();
 
+        // Shows how far the search has got; its Cancel button stops the search at once.
+        var progress = new SolveProgress();
+        var dialog = new SolveProgressDialog(progress);
+        dialog.CancelRequested += (_, _) =>
+        {
+            if (run == solveRun)
+            {
+                CancelSolve();
+            }
+        };
+        solveDialog = dialog;
+        dialog.Show(this);
+
         SolveResult result;
         try
         {
@@ -382,12 +396,18 @@ public sealed class MainForm : Form
             var shortestLimit = TimeSpan.FromMilliseconds(settings.SolverTimeLimitMs / 2);
             // Only some levels have a dead-end rule (see LevelShortcuts).
             var isDeadEnd = LevelShortcuts.DeadEndRule(snapshot.Data);
-            result = await Task.Run(() => Solver.Solve(snapshot, cancel.Token, shortestLimit, isDeadEnd: isDeadEnd));
+            result = await Task.Run(() => Solver.Solve(snapshot, cancel.Token, shortestLimit, isDeadEnd: isDeadEnd, progress: progress));
         }
         finally
         {
+            if (!dialog.IsDisposed)
+            {
+                dialog.CloseQuietly();
+            }
+
             if (run == solveRun)
             {
+                solveDialog = null;
                 solveCancel = null;
                 solveItem.Enabled = true;
                 UseWaitCursor = false;
@@ -445,6 +465,14 @@ public sealed class MainForm : Form
         solveRun++;
         solveItem.Enabled = true;
         UseWaitCursor = false;
+        if (solveDialog is { IsDisposed: false })
+        {
+            solveDialog.CloseQuietly();
+        }
+
+        solveDialog = null;
+        UpdateStatusBar();
+        Activate(); // Back to the game window, so keys work straight away.
     }
 
     /// <summary>Replays the solution with everything running at double speed.</summary>
