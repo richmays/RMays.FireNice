@@ -28,7 +28,7 @@ move while falling.
 | R5 | Pressing the direction opposite to the one the player faces only **turns** them; they stay in the same cell and the player's picture shows the new facing. Facing decides where the action button creates or removes ice |
 | R6 | Pressing the direction the player already faces moves them one cell. **Holding** the key keeps walking at about **3 cells per second**. Holding the opposite direction turns, pauses briefly, then walks |
 | R6a | If both Left and Right are held, the **last key pressed** wins |
-| R6b | The player **can't move left or right while falling** |
+| R6b | The player **can't move, turn or use the action while anything is moving**: while they fall, travel through a pipe, or while any ice, crate or fire is still sliding or falling. Keys pressed then **wait** and are carried out, in order, once everything has stopped |
 | R7 | Cell contents: **Air**, **Block**, **Ice**, **Fire** (plus the player) |
 | R8 | **Air**: anything can move through it freely |
 | R9 | **Block**: nothing can pass through it; it never moves |
@@ -108,10 +108,16 @@ Player input (steps, turns, actions) happens between ticks, as the player presse
 
 - **Falling** means the cell under the player is empty (Air or Fire) and they're moving down. The player
   is falling from the moment their support disappears until they land.
-- While the player is **falling**, Left/Right input is **ignored**. Turning and the action button are
-  also ignored. **(assumed)**
-- Other things (sliding or falling ice, falling fire) don't stop the player from acting. The player can
-  walk while a pushed cube is still sliding away. **(assumed)**
+- Nothing the player does takes effect while **anything** is moving: the player falling or in a pipe,
+  ice or crates sliding or falling, or fire falling. `GameState` itself ignores input then
+  (`CanAct` / `IsSettled`). Changed 2026-10-28: the player used to be able to act while other things
+  moved, so a quick second press could climb onto ice that had just dropped into place.
+- Keys pressed meanwhile aren't lost: they **wait in a queue** (`Input/InputQueue.cs`) and are carried
+  out in the order pressed, each once everything has stopped. For example, in Round 1-1, push the ice
+  toward the fire and press the same direction again at once: the player steps forward after the ice
+  has put the fire out. A press that sets something moving makes the next one wait again. Held-key
+  repeats don't pile up: a repeat that's due while things move fires once, as soon as they stop.
+  Waiting presses are dropped on win or loss, Reset, Rewind, loading a level, Solve and playback.
 - When the level loads, the clock starts right away, so anything unsupported, including the player,
   starts falling at once (R31, R32).
 
@@ -310,8 +316,8 @@ Checked at the end of every tick and after every player input:
   Up, Down, Action), lets everything settle until nothing moves, and skips positions it has already
   seen. Positions are explored in order of how many presses they took, so the first win it finds is a
   shortest one. Positions where the player has died are dropped.
-- **Limit:** because it waits for everything to settle after each press, it won't find solutions that
-  need a key pressed while something is still falling or sliding.
+- Like the player, the solver presses a key only once everything has settled, so it explores exactly
+  the moves the game allows.
 - It runs in the background with a time limit (`SolverTimeLimitMs` in keybindings.json, default 60
   seconds; an existing keybindings.json that sets its own value keeps it). The status bar shows
   "solving..." and game keys are ignored until it finishes. Reset or loading a level cancels it.
@@ -333,8 +339,26 @@ Checked at the end of every tick and after every player input:
   cores, then the new positions are added in exactly the order a one-at-a-time search would add them,
   so the solution found is the same as before and the same every run. It gives up after 25 million
   positions (about 2 GB).
+- **Level-specific dead ends** (`Core/LevelShortcuts.cs`): a level can have a rule that marks
+  positions that can never lead to a win. Both searches drop those positions and don't search on
+  from them. A rule is used only when the loaded level matches, cell for cell and start position
+  included, the level it was worked out for, because in another level the same pattern may be part
+  of the answer. There's one so far, for Round 10-6 (`level_10-6.txt`). The level needs four crates
+  in the pit over the lit jars (only crates can fill it, since ice melts there). So a position is a
+  dead end when fewer than four crates are either already in the pit or still able to move.
+  - A crate resting on something fixed never falls. Pushing it either way needs the player on one
+    side and an empty cell on the other, so it can never be pushed once either side is permanently
+    filled: by a block, or by another crate that's stuck itself. Examples: the crate that starts
+    against the left wall, any crate dropped against the right wall at the bottom of the shaft, and
+    two crates side by side on blocks.
+  - Crates resting on ice or on other crates aren't counted as stuck, because removing what's under
+    one lets it fall.
+  - Since the crate against the left wall is stuck from the start, any further stuck crate outside
+    the pit is a dead end.
+  - Effect: 60 seconds of shortest search checks every position up to 60 presses (55 without the
+    rule), still with no win. The fallback doesn't find a solution in 60 seconds either.
 - **Benchmark:** `dotnet run -c Release --project FireNice.Bench -- [seconds] [file filter]
-  [shortest-search seconds]` solves every level file and prints the outcome, presses, positions,
+  [shortest-search seconds] [norule]` solves every level file and prints the outcome, presses, positions,
   time and positions per second (a shortest-search time of 0 tries only the fallback). On a 2-core /
   4-thread machine the shortest search went from about 56,000 to about 345,000 positions per second
   (about 180,000 on one thread). Every level solves in under half a second, with either search,
@@ -413,6 +437,7 @@ FireNice/
       Settings.cs                – key bindings + timings; loads/saves keybindings.json
       InputRepeater.cs           – tracks held keys; fires direction steps and actions every ~333 ms;
                                    last-pressed direction wins; ignores Windows auto-repeat
+      InputQueue.cs              – holds key presses until nothing is moving, then applies them in order
     UI/
       MainForm.cs                – menu + toolbar (Reset, Load Level, Next Level, Exit), keyboard input,
                                    game clock Timer, win/lose messages, hosts GamePanel
@@ -441,9 +466,9 @@ Fire and ice are stored in the grid as cells, because gravity moves them. Each c
 the two attachment flags (only used for ice). The player is stored separately because it's controlled by input.
 
 ### Responsibilities
-- **GameState.Press(Direction)**: ignored unless `Status == Playing` and the player isn't falling. Turns
+- **GameState.Press(Direction)**: ignored unless `CanAct`: `Status == Playing` and nothing is moving. Turns
   the player or steps (3.4–3.7). Updates `Status`. Raises `StateChanged`.
-- **GameState.UseAction()**: ignored unless `Status == Playing` and the player isn't falling. Applies 3.9.
+- **GameState.UseAction()**: ignored unless `CanAct` (as above). Applies 3.9.
   Updates `Status`. Raises `StateChanged`.
 - **GameState.Tick()**: one clock step: sliding ice, gravity, win/lose (3.3). Raises `StateChanged` if
   anything changed. `IsStill` tells whether anything is still moving.
@@ -454,9 +479,13 @@ the two attachment flags (only used for ice). The player is stored separately be
   Loaded from `keybindings.json` if present, otherwise defaults. The core never sees keys, only actions.
 - **InputRepeater**: on KeyDown of a direction or the action key, fires once and starts repeating every
   interval while held. KeyUp stops it. Handles "turn, pause, then walk" and "last-pressed direction wins".
-  Takes a clock so it can be tested without real time.
+  Takes a clock so it can be tested without real time. A repeat that comes due while things are moving
+  waits (it asks `InputQueue.IsIdle`) instead of queuing.
+- **InputQueue**: sits between the keys and `GameState`. Each press joins the queue; `Pump()` (called
+  after every tick and on each press) applies waiting presses while `GameState.CanAct`.
 - **MainForm**: overrides `ProcessCmdKey` so arrow keys and Space aren't taken by focused controls. Runs a
-  WinForms `Timer` that calls `GameState.Tick()`. Sends key presses to `InputRepeater`. The Reset button
+  WinForms `Timer` that calls `GameState.Tick()` and then `InputQueue.Pump()`. Sends key presses to
+  `InputRepeater` (Left, Right, Action) or straight to `InputQueue` (Up, Down). The Reset button
   and `R` call `GameState.Reset()`. Shows the win/lose message when `Status` changes.
 - **GamePanel**: `DoubleBuffered = true`. Cell size is `min(panelWidth / levelWidth, panelHeight / levelHeight)`,
   recalculated on `Resize`. Draws the player facing the right way. Shows a "Fires left: N" counter.
@@ -596,8 +625,13 @@ Tests build a level from a small text grid, then call `Press`, `UseAction` and `
 **Falling**
 - A player starting with air underneath falls one cell per tick until they land, unhurt.
 - Walk off a ledge: the player falls 1 cell or many cells and lands safely.
-- While falling, Left/Right, turning and the action are ignored.
+- While falling, `GameState` ignores Left/Right, turning and the action.
 - After landing, input works again.
+- While pushed ice slides, or anything else falls, `GameState` ignores keys (`SettleBeforeInputTests`);
+  in Round 1-1 a quick second Right after pushing the bottom of a two-high stack no longer climbs it.
+- Keys pressed meanwhile wait and are carried out in order once everything stops (`InputQueueTests`):
+  in Round 1-1, pushing the ice into the fire and pressing Left again at once steps forward after the
+  fire is out. Waiting presses are dropped when the level is won. Held-key repeats don't pile up.
 
 **Climbing**
 - Climb onto a Block, onto attached ice, and onto immobile free ice.
@@ -715,7 +749,9 @@ Tests build a level from a small text grid, then call `Press`, `UseAction` and `
 ## 9. Decisions
 
 All earlier assumptions are confirmed:
-- Turning and the action button are ignored while the player is falling.
-- The player can act while other things are sliding or falling.
+- ~~Turning and the action button are ignored while the player is falling.~~
+- ~~The player can act while other things are sliding or falling.~~ Changed 2026-10-28: nothing takes
+  effect while anything is moving (the player included); keys pressed meanwhile wait in a queue and are
+  carried out in order once everything stops.
 - Falling and sliding move at about 10 cells per second.
 - No extras (undo, move counter, level select, level editor) for now.

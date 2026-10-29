@@ -99,12 +99,15 @@ public static class Solver
     /// <paramref name="shortestTimeLimit"/> (or until <paramref name="cancel"/> if there's no limit);
     /// if it gives up, the fallback search runs until <paramref name="cancel"/>. Stops with
     /// <see cref="SolveOutcome.GaveUp"/> if the token is cancelled or too many positions pile up first.
+    /// <paramref name="isDeadEnd"/>, if given, marks settled positions that can't lead to a win (see
+    /// <see cref="LevelShortcuts"/>); neither search goes on from them.
     /// </summary>
     public static SolveResult Solve(
         GameState start,
         CancellationToken cancel,
         TimeSpan? shortestTimeLimit = null,
-        int maxPositions = 25_000_000)
+        int maxPositions = 25_000_000,
+        Func<GameState, bool>? isDeadEnd = null)
     {
         GameState root = start.Clone();
         if (!Settle(root) || root.Status == GameStatus.Lost)
@@ -129,7 +132,7 @@ public static class Solver
                 shortestCancel.CancelAfter(limit);
             }
 
-            shortest = SolveShortest(root, shortestCancel.Token, maxPositions);
+            shortest = SolveShortest(root, shortestCancel.Token, maxPositions, isDeadEnd);
         }
 
         if (shortest.Outcome != SolveOutcome.GaveUp || cancel.IsCancellationRequested)
@@ -137,7 +140,7 @@ public static class Solver
             return shortest;
         }
 
-        SolveResult any = SolveAny(root, cancel, maxPositions);
+        SolveResult any = SolveAny(root, cancel, maxPositions, isDeadEnd);
         return any with { PositionsChecked = shortest.PositionsChecked + any.PositionsChecked };
     }
 
@@ -151,7 +154,8 @@ public static class Solver
     /// parallel, then the new positions are added in exactly the order a one-at-a-time search would
     /// add them, so the solution found is the same every time.
     /// </remarks>
-    private static SolveResult SolveShortest(GameState root, CancellationToken cancel, int maxPositions)
+    private static SolveResult SolveShortest(
+        GameState root, CancellationToken cancel, int maxPositions, Func<GameState, bool>? isDeadEnd)
     {
         int[] cells = ChangeableCells(root.Level);
         var positions = new PositionStore(PackedWords(cells));
@@ -174,7 +178,7 @@ public static class Solver
                     if (!cancel.IsCancellationRequested)
                     {
                         int from = layerStart + (chunk * ChunkSize);
-                        found[chunk] = Expand(scratch, cells, positions, from, Math.Min(from + ChunkSize, layerEnd));
+                        found[chunk] = Expand(scratch, cells, positions, from, Math.Min(from + ChunkSize, layerEnd), isDeadEnd);
                     }
 
                     return scratch;
@@ -208,8 +212,7 @@ public static class Solver
                 return new SolveResult(SolveOutcome.GaveUp, Array.Empty<SolverInput>(), positions.Count);
             }
 
-            layerStart = layerEnd;
-        }
+            layerStart = layerEnd;        }
 
         return new SolveResult(SolveOutcome.Impossible, Array.Empty<SolverInput>(), positions.Count);
     }
@@ -220,7 +223,8 @@ public static class Solver
     /// then ice and crates closest to the fires; ties go to the position found first), so it finds a
     /// solution much sooner than the shortest search on most levels, but often not a shortest one.
     /// </summary>
-    internal static SolveResult SolveAny(GameState root, CancellationToken cancel, int maxPositions)
+    internal static SolveResult SolveAny(
+        GameState root, CancellationToken cancel, int maxPositions, Func<GameState, bool>? isDeadEnd = null)
     {
         int[] cells = ChangeableCells(root.Level);
         var positions = new PositionStore(PackedWords(cells));
@@ -249,7 +253,7 @@ public static class Solver
                 }
 
                 Apply(scratch, input);
-                if (!Settle(scratch) || scratch.Status == GameStatus.Lost)
+                if (!Settle(scratch) || scratch.Status == GameStatus.Lost || IsDeadEnd(scratch, isDeadEnd))
                 {
                     continue;
                 }
@@ -272,6 +276,9 @@ public static class Solver
 
         return new SolveResult(SolveOutcome.Impossible, Array.Empty<SolverInput>(), positions.Count);
     }
+
+    private static bool IsDeadEnd(GameState game, Func<GameState, bool>? isDeadEnd) =>
+        isDeadEnd is not null && game.Status != GameStatus.Won && isDeadEnd(game);
 
     /// <summary>
     /// How far a position looks from winning (lower is better): a large penalty per fire left, plus
@@ -343,7 +350,8 @@ public static class Solver
     private static int PackedWords(int[] cells) => (GameState.PackedBits(cells.Length) + 63) / 64;
 
     /// <summary>Tries every key from each position in [from, to) and collects the positions not seen before.</summary>
-    private static Found Expand(GameState scratch, int[] cells, PositionStore positions, int from, int to)
+    private static Found Expand(
+        GameState scratch, int[] cells, PositionStore positions, int from, int to, Func<GameState, bool>? isDeadEnd)
     {
         var found = new Found(positions.Words);
         Span<ulong> packed = stackalloc ulong[positions.Words];
@@ -372,7 +380,7 @@ public static class Solver
 
                 fresh = false;
                 Apply(scratch, input);
-                if (!Settle(scratch) || scratch.Status == GameStatus.Lost)
+                if (!Settle(scratch) || scratch.Status == GameStatus.Lost || IsDeadEnd(scratch, isDeadEnd))
                 {
                     continue;
                 }

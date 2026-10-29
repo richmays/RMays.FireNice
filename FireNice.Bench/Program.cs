@@ -1,6 +1,6 @@
 ﻿// Solver benchmark: solves every level file and reports time and positions per second.
 // Usage: dotnet run -c Release --project FireNice.Bench -- [seconds per level, default 60] [file filter]
-//        [seconds for the shortest search, default half; 0 tries only the fallback]
+//        [seconds for the shortest search, default half; 0 tries only the fallback] [norule]
 using System.Diagnostics;
 using FireNice.Core;
 using FireNice.IO;
@@ -16,8 +16,10 @@ foreach (string file in Directory.GetFiles(levels, filter).OrderBy(f => f, Strin
     var game = new GameState(LevelReader.Load(file));
     using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
     var watch = Stopwatch.StartNew();
-    // Like the game, the shortest search gets half the time by default and the fallback the rest.
-    SolveResult result = Solver.Solve(game, cancel.Token, TimeSpan.FromSeconds(shortestSeconds));
+    // Like the game: the shortest search gets half the time by default and the fallback the rest,
+    // and a level's dead-end rule is used if it has one (pass "norule" to turn that off).
+    var isDeadEnd = args.Contains("norule") ? null : LevelShortcuts.DeadEndRule(game.Data);
+    SolveResult result = Solver.Solve(game, cancel.Token, TimeSpan.FromSeconds(shortestSeconds), isDeadEnd: isDeadEnd);
     double elapsed = watch.Elapsed.TotalSeconds;
     Console.WriteLine(
         $"{Path.GetFileName(file),-18} {result.Outcome,-17} {result.Inputs.Count,7} {result.PositionsChecked,11:N0} " +

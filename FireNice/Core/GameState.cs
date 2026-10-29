@@ -15,6 +15,12 @@ public sealed class GameState : IPlayerControls
     /// <summary>Set while the player is traveling through a pipe.</summary>
     private PipeTravel? pipe;
 
+    /// <summary>
+    /// Whether the next tick would move nothing: true or false once known, null when something
+    /// changed and it hasn't been checked yet (see <see cref="IsSettled"/>).
+    /// </summary>
+    private bool? settled;
+
     // Rewind: one point per input since the level started, the latest on top.
     private readonly Stack<RewindPoint> rewindPoints = new();
     private readonly List<RewindStep> rewindPath = new();
@@ -38,6 +44,7 @@ public sealed class GameState : IPlayerControls
         pipe = other.pipe?.Clone();
         Status = other.Status;
         LastChange = other.LastChange;
+        settled = other.settled;
     }
 
     /// <summary>
@@ -116,6 +123,7 @@ public sealed class GameState : IPlayerControls
         sliding.Clear();
         moves.Clear();
         Status = GameStatus.Playing;
+        settled = true; // The solver only packs positions where nothing is moving.
     }
 
     /// <summary>How many bits <see cref="Pack"/> writes for the given number of cells.</summary>
@@ -212,8 +220,30 @@ public sealed class GameState : IPlayerControls
     /// <summary>The player is inside a pipe, moving through it automatically.</summary>
     public bool IsInPipe => pipe is not null;
 
-    /// <summary>Input is only accepted while playing and standing on something (not falling or in a pipe).</summary>
-    public bool CanAct => Status == GameStatus.Playing && !IsPlayerFalling && !IsInPipe;
+    /// <summary>
+    /// Nothing is moving: no ice or crate is sliding or about to fall, and the player isn't falling
+    /// or traveling through a pipe. Checked by trying one tick on a copy, and remembered until
+    /// something changes.
+    /// </summary>
+    public bool IsSettled
+    {
+        get
+        {
+            if (sliding.Count > 0 || IsInPipe || IsPlayerFalling)
+            {
+                return false;
+            }
+
+            settled ??= !Clone().Tick();
+            return settled.Value;
+        }
+    }
+
+    /// <summary>
+    /// Input is only accepted while playing and once everything has stopped moving, so a key
+    /// pressed while something is still falling or sliding is ignored.
+    /// </summary>
+    public bool CanAct => Status == GameStatus.Playing && IsSettled;
 
     /// <summary>The cell the action button works on: one ahead and one down.</summary>
     public (int X, int Y) ActionTarget => (Player.X + Player.Facing.Dx(), Player.Y + 1);
@@ -361,6 +391,10 @@ public sealed class GameState : IPlayerControls
         changed |= ApplyGravity();
         changed |= ApplyJars();
         UpdateStatus();
+
+        // A tick that moved nothing proves the next one won't either; after one that moved
+        // something, whether more is coming is checked when it's needed.
+        settled = changed ? null : true;
         if (changed)
         {
             TrackForRewind(ChangeKind.Tick);
@@ -899,6 +933,11 @@ public sealed class GameState : IPlayerControls
 
     private void OnChanged(ChangeKind kind)
     {
+        if (kind != ChangeKind.Tick)
+        {
+            settled = null; // An input, rewind or reset may have set something in motion.
+        }
+
         LastChange = kind;
         StateChanged?.Invoke(this, EventArgs.Empty);
     }

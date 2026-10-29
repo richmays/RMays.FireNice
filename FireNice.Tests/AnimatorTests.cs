@@ -125,9 +125,13 @@ public class AnimatorTests
 
         game.Tick();
         animator.Sync(game, 0);
-        game.Press(Direction.Left); // Just a turn.
-        animator.Sync(game, 20);
+        int changes = 0;
+        game.StateChanged += (_, _) => changes++;
+        game.Press(Direction.Left); // Ignored: the ice is still falling.
 
+        // The game only syncs the animator when something changes, so nothing restarts the glide.
+        Assert.Equal(0, changes);
+        Assert.Equal(Direction.Right, game.Player.Facing);
         Assert.True(animator.IsAnimating(50));
         Assert.Equal(new PointF(3, 1.5f), animator.CellPosition(3, 2, 50));
     }

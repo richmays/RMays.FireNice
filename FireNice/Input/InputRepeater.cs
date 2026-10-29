@@ -14,15 +14,21 @@ namespace FireNice.Input;
 public sealed class InputRepeater
 {
     private readonly IPlayerControls controls;
+    private readonly Func<bool> readyForRepeat;
     private readonly List<Direction> heldDirections = new();
     private long nextDirectionAt;
     private bool actionHeld;
     private long nextActionAt;
 
-    public InputRepeater(IPlayerControls controls, int intervalMs)
+    /// <param name="readyForRepeat">
+    /// Whether a repeat may fire now. A repeat that's due while this is false waits and fires as
+    /// soon as it's true, so repeats don't pile up while things are moving. Defaults to always.
+    /// </param>
+    public InputRepeater(IPlayerControls controls, int intervalMs, Func<bool>? readyForRepeat = null)
     {
         this.controls = controls;
         IntervalMs = intervalMs;
+        this.readyForRepeat = readyForRepeat ?? (() => true);
     }
 
     public int IntervalMs { get; }
@@ -68,13 +74,19 @@ public sealed class InputRepeater
     /// <summary>Fires any repeats that are due. Call this often (every frame).</summary>
     public void Update(long now)
     {
+        bool due = (heldDirections.Count > 0 && now >= nextDirectionAt) || (actionHeld && now >= nextActionAt);
+        if (!due || !readyForRepeat())
+        {
+            return;
+        }
+
         if (heldDirections.Count > 0 && now >= nextDirectionAt)
         {
             controls.Press(heldDirections[^1]);
             nextDirectionAt = now + IntervalMs;
         }
 
-        if (actionHeld && now >= nextActionAt)
+        if (actionHeld && now >= nextActionAt && readyForRepeat())
         {
             controls.UseAction();
             nextActionAt = now + IntervalMs;

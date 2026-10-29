@@ -21,6 +21,9 @@ public sealed class MainForm : Form
 
     private GameState? game;
     private InputRepeater? repeater;
+
+    // Key presses wait here until nothing is moving.
+    private InputQueue? inputQueue;
     private int levelIndex = -1;
     private long nextTickAt;
     private bool wasAnimating;
@@ -159,10 +162,10 @@ public sealed class MainForm : Form
                 repeater?.DirectionDown(Direction.Right, Now);
                 break;
             case GameAction.MoveUp:
-                game?.PressUp();
+                inputQueue?.PressUp();
                 break;
             case GameAction.MoveDown:
-                game?.PressDown();
+                inputQueue?.PressDown();
                 break;
             case GameAction.Action:
                 repeater?.ActionDown(Now);
@@ -225,13 +228,17 @@ public sealed class MainForm : Form
                 nextRewindAt = now + RewindRepeatMs;
             }
 
+            // Waiting key presses go before any held-key repeat.
+            inputQueue?.Pump();
             repeater.Update(now);
 
-            // Catch up on missed ticks, but not forever if the window was stalled.
+            // Catch up on missed ticks, but not forever if the window was stalled. Waiting key
+            // presses are applied as soon as a tick leaves everything still.
             int ticks = 0;
             while (now >= nextTickAt && ticks < 5)
             {
                 game.Tick();
+                inputQueue?.Pump();
                 nextTickAt += settings.TickMs;
                 ticks++;
             }
@@ -286,7 +293,9 @@ public sealed class MainForm : Form
 
         game = new GameState(data);
         game.StateChanged += OnGameChanged;
-        repeater = new InputRepeater(game, settings.RepeatIntervalMs);
+        var queue = new InputQueue(game);
+        inputQueue = queue;
+        repeater = new InputRepeater(queue, settings.RepeatIntervalMs, () => queue.IsIdle);
         levelIndex = levelPaths.FindIndex(p => string.Equals(Path.GetFullPath(p), Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase));
         nextTickAt = Now + settings.TickMs;
         animator.Sync(game, Now);
@@ -298,6 +307,7 @@ public sealed class MainForm : Form
     private void LoadLevelFromDialog()
     {
         repeater?.ReleaseAll();
+        inputQueue?.Clear();
         using var dialog = new OpenFileDialog
         {
             Title = "Load Level",
@@ -320,6 +330,7 @@ public sealed class MainForm : Form
         CancelSolve();
         StopPlayback();
         repeater?.ReleaseAll();
+        inputQueue?.Clear();
         game.Reset();
         nextTickAt = Now + settings.TickMs;
     }
@@ -335,6 +346,7 @@ public sealed class MainForm : Form
         CancelSolve();
         StopPlayback();
         repeater?.ReleaseAll();
+        inputQueue?.Clear();
         game.Rewind();
         nextTickAt = Now + settings.TickMs;
     }
@@ -352,6 +364,7 @@ public sealed class MainForm : Form
 
         StopPlayback();
         repeater?.ReleaseAll();
+        inputQueue?.Clear();
 
         GameState solving = game;
         GameState snapshot = game.Clone();
@@ -367,7 +380,9 @@ public sealed class MainForm : Form
         {
             // The shortest search gets the first half of the time; the fallback gets the rest.
             var shortestLimit = TimeSpan.FromMilliseconds(settings.SolverTimeLimitMs / 2);
-            result = await Task.Run(() => Solver.Solve(snapshot, cancel.Token, shortestLimit));
+            // Only some levels have a dead-end rule (see LevelShortcuts).
+            var isDeadEnd = LevelShortcuts.DeadEndRule(snapshot.Data);
+            result = await Task.Run(() => Solver.Solve(snapshot, cancel.Token, shortestLimit, isDeadEnd: isDeadEnd));
         }
         finally
         {
@@ -441,6 +456,7 @@ public sealed class MainForm : Form
         }
 
         repeater?.ReleaseAll();
+        inputQueue?.Clear();
         animator.WalkMs = settings.WalkAnimationMs / 2;
         animator.TickMs = settings.TickMs / 2;
         playback = new Playback(game, inputs, settings.TickMs / 2, settings.RepeatIntervalMs / 2, Now);
