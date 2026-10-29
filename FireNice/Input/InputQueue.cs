@@ -11,7 +11,7 @@ namespace FireNice.Input;
 public sealed class InputQueue : IPlayerControls
 {
     private readonly GameState game;
-    private readonly Queue<SolverInput> waiting = new();
+    private readonly Queue<Key> waiting = new();
 
     public InputQueue(GameState game)
     {
@@ -25,13 +25,13 @@ public sealed class InputQueue : IPlayerControls
     public bool IsIdle => waiting.Count == 0 && game.CanAct;
 
     public void Press(Direction direction) =>
-        Add(direction == Direction.Left ? SolverInput.Left : SolverInput.Right);
+        Add(direction == Direction.Left ? Key.Left : Key.Right);
 
-    public void UseAction() => Add(SolverInput.Action);
+    public void UseAction() => Add(Key.Action);
 
-    public void PressUp() => Add(SolverInput.Up);
+    public void PressUp() => Add(Key.Up);
 
-    public void PressDown() => Add(SolverInput.Down);
+    public void PressDown() => Add(Key.Down);
 
     /// <summary>
     /// Applies waiting presses while the game can take them. Call after every tick. Once the level
@@ -47,14 +47,50 @@ public sealed class InputQueue : IPlayerControls
 
         while (waiting.Count > 0 && game.CanAct)
         {
-            Solver.Apply(game, waiting.Dequeue());
+            Apply(waiting.Dequeue());
         }
     }
 
     /// <summary>Drops everything waiting (for example on reset or rewind).</summary>
     public void Clear() => waiting.Clear();
 
-    private void Add(SolverInput input)
+    /// <summary>
+    /// The keyboard keys. These aren't <see cref="SolverInput"/>s: a keyboard Left or Right only turns
+    /// the player if they're facing the other way, and the one action key works on whichever side
+    /// they face.
+    /// </summary>
+    private enum Key
+    {
+        Left,
+        Right,
+        Up,
+        Down,
+        Action,
+    }
+
+    private void Apply(Key key)
+    {
+        switch (key)
+        {
+            case Key.Left:
+                game.Press(Direction.Left);
+                break;
+            case Key.Right:
+                game.Press(Direction.Right);
+                break;
+            case Key.Up:
+                game.PressUp();
+                break;
+            case Key.Down:
+                game.PressDown();
+                break;
+            case Key.Action:
+                game.UseAction();
+                break;
+        }
+    }
+
+    private void Add(Key input)
     {
         waiting.Enqueue(input);
         Pump();

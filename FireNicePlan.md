@@ -312,10 +312,20 @@ Checked at the end of every tick and after every player input:
 ### 3.15 Solve
 - **Game → Solve** searches for the fewest key presses that put out every fire, starting from the game
   exactly as it is now (including anything still falling or sliding).
-- The search (`Core/Solver.cs`) is breadth-first. From each position it tries every key (Left, Right,
-  Up, Down, Action), lets everything settle until nothing moves, and skips positions it has already
-  seen. Positions are explored in order of how many presses they took, so the first win it finds is a
-  shortest one. Positions where the player has died are dropped.
+- The search (`Core/Solver.cs`) is breadth-first. From each position it tries every solver input,
+  lets everything settle until nothing moves, and skips positions it has already seen. Positions are
+  explored in order of how many presses they took, so the first win it finds is a shortest one.
+  Positions where the player has died are dropped.
+- **Solver inputs ignore facing** (`SolverInput`): Left, Right, Up, Down, Action Left and Action
+  Right. Solver Left and Right always step, push or climb that way in one press (`GameState.Move`),
+  never just turn. Action Left and Action Right create or remove ice one cell down and to that side
+  (`GameState.UseAction(Direction)`), the same as turning that way and pressing the action button.
+  Both turn the player to face the way they went, so playback looks right. Because nothing the
+  solver does depends on facing, it isn't part of a position: two positions that differ only in
+  facing are the same. Presses are counted in these inputs, so a solution that turns around is
+  shorter than the keyboard presses it replaces (the turn is folded in). The keyboard is unchanged:
+  pressing the opposite direction still only turns (R5), and the input queue keeps its own keyboard
+  keys rather than using solver inputs.
 - Like the player, the solver presses a key only once everything has settled, so it explores exactly
   the moves the game allows.
 - It runs in the background with a time limit (`SolverTimeLimitMs` in keybindings.json, default 60
@@ -336,15 +346,15 @@ Checked at the end of every tick and after every player input:
   time (`Solver.SolveAny`). It's a greedy best-first search: it always continues from the most
   promising position found so far, scored by fires left (1000 each) plus how far each ice cube and
   crate is from the nearest fire; ties go to the position found first, so it's deterministic. It
-  usually finds a solution far sooner than the shortest search but often a longer one (level05: 20
-  presses instead of 11; Round 10-10: 98 instead of 30). If it checks every reachable position
+  usually finds a solution far sooner than the shortest search but often a longer one (level05: 14
+  presses instead of 11; Round 10-10: 64 instead of 22). If it checks every reachable position
   without a win, the result is still "Impossible".
 - **Speed:** each position is stored packed into a few 64-bit words: only the cells that can ever
   change (everything except blocks and pipes), 4 bits each, plus the player and pipe state
   (`GameState.Pack` / `Unpack`, internal). One scratch game per thread is loaded from those bits to try
   each key, so games are never cloned per press, and lookups use a custom hash table instead of a set
   of strings. Keys that can't do anything are skipped without trying them (Up/Down with no pipe
-  opening that way, Action when the target isn't air or ice, every key while waiting in a blocked
+  opening that way, Action Left / Right when that target isn't air or ice, every key while waiting in a blocked
   pipe). Each layer of positions (all the same number of presses from the start) is expanded on all
   cores, then the new positions are added in exactly the order a one-at-a-time search would add them,
   so the solution found is the same as before and the same every run. It gives up after 25 million
@@ -378,7 +388,17 @@ Checked at the end of every tick and after every player input:
   seconds): the solution has to drop four crates one at a time into the pit over the lit jars and
   climb back out of the shaft each time on an ice step, and a general-purpose score can't see that
   progress. Other general searches tried and dropped for the same reason: other scores, best-first
-  with novelty, hill climbing (with and without backtracking) and beam search.
+  with novelty, hill climbing (with and without backtracking) and beam search. (The press counts in
+  this paragraph and the dead-end bullet were measured before solver inputs ignored facing, when a
+  turn cost a press.)
+- **Effect of ignoring facing** (20 seconds per level, same machine): each level has about half as
+  many distinct positions, and solutions that turn around are shorter. Round 10-10: 22 presses from
+  19,349 positions (was 30 from 43,733); level_1-1: 11 from 20 (was 13 from 38); level_1-2: 12 from
+  64 (was 13 from 109). Each position costs a little more to expand (six inputs, and Left / Right
+  always move rather than sometimes just turning), so positions per second drop about 15–20% on the
+  big levels (Round 10-6: 169,000 vs 204,000), but each position covers roughly twice the ground.
+  Peak memory in the run fell from 807 MB to 540 MB. Rounds 10-1, 10-2 and 10-6 still don't solve
+  in 20 seconds.
 - **Results:**
   - Solution found: "Solution found!  Playback?" with Yes and No. No returns control to the player.
   - Only the fallback found one: "Couldn't find the shortest solution in time, but found one that

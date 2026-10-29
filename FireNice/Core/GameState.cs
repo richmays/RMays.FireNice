@@ -83,7 +83,9 @@ public sealed class GameState : IPlayerControls
     /// <summary>
     /// Solver support: packs a settled game into bits. Only the cells listed can change (blocks and
     /// pipes never do), so only those are stored, 4 bits each, followed by the player and pipe state.
-    /// Two games with the same bits play out identically, like <see cref="StateKey"/>.
+    /// Which way the player faces isn't stored: the solver's inputs (<see cref="Move"/> and
+    /// <see cref="UseAction(Direction)"/>) each name their direction, so two games with the same bits
+    /// play out identically under them. <see cref="Unpack"/> leaves the facing as it was.
     /// </summary>
     internal void Pack(ReadOnlySpan<int> cellIndexes, Span<ulong> bits)
     {
@@ -97,7 +99,6 @@ public sealed class GameState : IPlayerControls
 
         WriteBits(bits, ref bit, 8, (ulong)Player.X);
         WriteBits(bits, ref bit, 8, (ulong)Player.Y);
-        WriteBits(bits, ref bit, 1, Player.Facing == Direction.Left ? 1UL : 0UL);
         WriteBits(bits, ref bit, 1, Player.IsAlive ? 1UL : 0UL);
         WriteBits(bits, ref bit, 3, pipe is null ? 0UL : 1UL + (ulong)pipe.Moving);
         WriteBits(bits, ref bit, 1, pipe?.Returning == true ? 1UL : 0UL);
@@ -115,7 +116,6 @@ public sealed class GameState : IPlayerControls
 
         Player.X = (int)ReadBits(bits, ref bit, 8);
         Player.Y = (int)ReadBits(bits, ref bit, 8);
-        Player.Facing = ReadBits(bits, ref bit, 1) == 1 ? Direction.Left : Direction.Right;
         Player.IsAlive = ReadBits(bits, ref bit, 1) == 1;
         int pipeCode = (int)ReadBits(bits, ref bit, 3);
         bool returning = ReadBits(bits, ref bit, 1) == 1;
@@ -127,7 +127,7 @@ public sealed class GameState : IPlayerControls
     }
 
     /// <summary>How many bits <see cref="Pack"/> writes for the given number of cells.</summary>
-    internal static int PackedBits(int cellCount) => (cellCount * 4) + 22;
+    internal static int PackedBits(int cellCount) => (cellCount * 4) + 21;
 
     private static ulong CellCode(Cell cell) => cell.Type switch
     {
@@ -317,39 +317,30 @@ public sealed class GameState : IPlayerControls
     public void PressDown() => EnterPipeVertically(Heading.Down);
 
     /// <summary>Turns the player, or steps / pushes / climbs if already facing that way.</summary>
-    public void Press(Direction direction)
-    {
-        if (!CanAct)
-        {
-            return;
-        }
+    public void Press(Direction direction) => Press(direction, turnFirst: true);
 
-        GameState? before = KeepsRewind ? Clone() : null;
-        moves.Clear();
-        if (Player.Facing != direction)
-        {
-            Player.Facing = direction;
-        }
-        else
-        {
-            Step(direction);
-        }
-
-        ApplyJars();
-        UpdateStatus();
-        RememberForRewind(before);
-        OnChanged(ChangeKind.Input);
-    }
+    /// <summary>
+    /// Solver input: faces that way and steps / pushes / climbs in the same press, so which way the
+    /// player was facing makes no difference.
+    /// </summary>
+    public void Move(Direction direction) => Press(direction, turnFirst: false);
 
     /// <summary>Creates ice in an empty target cell, or removes ice that's already there.</summary>
-    public void UseAction()
+    public void UseAction() => UseAction(Player.Facing);
+
+    /// <summary>
+    /// Solver input: the action button as if facing that way, working on the cell one that way and
+    /// one down. Turns the player to face it, just as turning and pressing the button would.
+    /// </summary>
+    public void UseAction(Direction direction)
     {
         if (!CanAct)
         {
             return;
         }
 
-        var (x, y) = ActionTarget;
+        int x = Player.X + direction.Dx();
+        int y = Player.Y + 1;
         Cell target = Level[x, y];
         if (target.Type != CellType.Air && !target.IsIce)
         {
@@ -358,6 +349,7 @@ public sealed class GameState : IPlayerControls
 
         GameState? before = KeepsRewind ? Clone() : null;
         moves.Clear();
+        Player.Facing = direction;
         if (target.Type == CellType.Air)
         {
             CreateIce(x, y);
@@ -365,6 +357,28 @@ public sealed class GameState : IPlayerControls
         else
         {
             RemoveIce(x, y);
+        }
+
+        ApplyJars();
+        UpdateStatus();
+        RememberForRewind(before);
+        OnChanged(ChangeKind.Input);
+    }
+
+    private void Press(Direction direction, bool turnFirst)
+    {
+        if (!CanAct)
+        {
+            return;
+        }
+
+        GameState? before = KeepsRewind ? Clone() : null;
+        moves.Clear();
+        bool justTurning = turnFirst && Player.Facing != direction;
+        Player.Facing = direction;
+        if (!justTurning)
+        {
+            Step(direction);
         }
 
         ApplyJars();

@@ -37,6 +37,82 @@ public class SolverTests
     }
 
     [Fact]
+    public void SolverLeftStepsStraightAwayEvenWhenFacingRight()
+    {
+        GameState game = Game(
+            "#####",
+            "#...#",
+            "#.P.#",
+            "#####");
+
+        Solver.Apply(game, SolverInput.Left);
+
+        Assert.Equal(1, game.Player.X);
+        Assert.Equal(Direction.Left, game.Player.Facing);
+    }
+
+    [Fact]
+    public void ActionLeftAndActionRightWorkOnTheirOwnSideWhicheverWayThePlayerFaces()
+    {
+        GameState game = Game(
+            "#######",
+            "#.....#",
+            "#..P..#",
+            "#..#..#",
+            "#######");
+
+        Solver.Apply(game, SolverInput.ActionLeft);
+        Solver.Settle(game);
+        Assert.True(game.Level[2, 3].IsIce);
+        Assert.False(game.Level[4, 3].IsIce);
+        Assert.Equal(Direction.Left, game.Player.Facing);
+
+        Solver.Apply(game, SolverInput.ActionRight);
+        Solver.Settle(game);
+        Assert.True(game.Level[4, 3].IsIce);
+
+        Solver.Apply(game, SolverInput.ActionLeft); // Already ice there: removes it.
+        Solver.Settle(game);
+        Assert.False(game.Level[2, 3].IsIce);
+        Assert.True(game.Level[4, 3].IsIce);
+    }
+
+    [Fact]
+    public void FindsASolutionThatGoesBothWaysWithoutTurning()
+    {
+        GameState game = Game(
+            "#########",
+            "#.......#",
+            "#.F.I.P.#",
+            "#########");
+
+        SolveResult result = Solve(game);
+
+        Assert.Equal(SolveOutcome.Solved, result.Outcome);
+        Assert.Equal(new[] { SolverInput.Left, SolverInput.Left }, result.Inputs);
+    }
+
+    [Fact]
+    public void PositionsThatDifferOnlyInFacingAreTheSame()
+    {
+        GameState game = Game(
+            "#####",
+            "#...#",
+            "#.P.#",
+            "#####");
+        GameState turned = game.Clone();
+        turned.Press(Direction.Left);
+        int[] cells = { 6, 7, 8 };
+        var packed = new ulong[1];
+        var packedTurned = new ulong[1];
+
+        game.Pack(cells, packed);
+        turned.Pack(cells, packedTurned);
+
+        Assert.Equal(packed, packedTurned);
+    }
+
+    [Fact]
     public void DoesNotChangeTheGameItSolves()
     {
         GameState game = Game(
@@ -60,12 +136,12 @@ public class SolverTests
             "#........#",
             "#.P..I.F.#",
             "##########");
-        game.Press(Direction.Left); // Turned the wrong way.
+        game.Press(Direction.Left); // Turned the wrong way, which doesn't matter to the solver.
 
         SolveResult result = Solve(game);
         Replay(game, result.Inputs);
 
-        Assert.Equal(4, result.Inputs.Count);
+        Assert.Equal(3, result.Inputs.Count);
         Assert.Equal(GameStatus.Won, game.Status);
     }
 
@@ -221,7 +297,7 @@ public class SolverTests
 
             for (int press = 0; press < 300 && game.Status == GameStatus.Playing; press++)
             {
-                Solver.Apply(game, (SolverInput)random.Next(5));
+                Solver.Apply(game, (SolverInput)random.Next(6));
                 Solver.Settle(game);
                 if (game.Status != GameStatus.Playing)
                 {
@@ -230,6 +306,7 @@ public class SolverTests
 
                 game.Pack(cells, packed);
                 copy.Unpack(cells, packed);
+                copy.Player.Facing = game.Player.Facing; // Not packed: the solver's inputs don't depend on it.
                 Assert.Equal(game.StateKey(), copy.StateKey());
                 Assert.Equal(game.CanAct, copy.CanAct);
             }

@@ -1,13 +1,22 @@
 namespace FireNice.Core;
 
-/// <summary>A single key press the solver can make.</summary>
+/// <summary>
+/// A single key press the solver can make. Unlike the keyboard, these ignore which way the player is
+/// facing: Left and Right always step (or push or climb) that way, never just turn, and there are two
+/// action buttons, one for each side.
+/// </summary>
 public enum SolverInput
 {
     Left,
     Right,
     Up,
     Down,
-    Action,
+
+    /// <summary>Creates or removes ice one cell left of the player and one down.</summary>
+    ActionLeft,
+
+    /// <summary>Creates or removes ice one cell right of the player and one down.</summary>
+    ActionRight,
 }
 
 public enum SolveOutcome
@@ -51,7 +60,8 @@ public static class Solver
 
     private static readonly SolverInput[] AllInputs =
     {
-        SolverInput.Left, SolverInput.Right, SolverInput.Up, SolverInput.Down, SolverInput.Action,
+        SolverInput.Left, SolverInput.Right, SolverInput.Up, SolverInput.Down,
+        SolverInput.ActionLeft, SolverInput.ActionRight,
     };
 
     /// <summary>Presses one key on the game.</summary>
@@ -60,10 +70,10 @@ public static class Solver
         switch (input)
         {
             case SolverInput.Left:
-                game.Press(Direction.Left);
+                game.Move(Direction.Left);
                 break;
             case SolverInput.Right:
-                game.Press(Direction.Right);
+                game.Move(Direction.Right);
                 break;
             case SolverInput.Up:
                 game.PressUp();
@@ -71,8 +81,11 @@ public static class Solver
             case SolverInput.Down:
                 game.PressDown();
                 break;
-            case SolverInput.Action:
-                game.UseAction();
+            case SolverInput.ActionLeft:
+                game.UseAction(Direction.Left);
+                break;
+            case SolverInput.ActionRight:
+                game.UseAction(Direction.Right);
                 break;
         }
     }
@@ -428,7 +441,7 @@ public static class Solver
 
     /// <summary>
     /// False when the key is certain to be ignored, so it isn't worth trying. Up and Down only do
-    /// something next to a pipe opening that way; Action only works on air or ice.
+    /// something next to a pipe opening that way; the action buttons only work on air or ice.
     /// </summary>
     private static bool CanDoAnything(GameState game, SolverInput input)
     {
@@ -439,9 +452,9 @@ public static class Solver
                 return game.Level[player.X, player.Y - 1].IsOpen(Heading.Down);
             case SolverInput.Down:
                 return game.Level[player.X, player.Y + 1].IsOpen(Heading.Up);
-            case SolverInput.Action:
-                var (x, y) = game.ActionTarget;
-                Cell target = game.Level[x, y];
+            case SolverInput.ActionLeft or SolverInput.ActionRight:
+                int dx = input == SolverInput.ActionLeft ? -1 : 1;
+                Cell target = game.Level[player.X + dx, player.Y + 1];
                 return target.Type == CellType.Air || target.IsIce;
             default:
                 return true;
